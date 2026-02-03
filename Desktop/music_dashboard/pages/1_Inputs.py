@@ -8,19 +8,20 @@ import datetime as dt
 st.title("📊 Performance Visuals")
 
 # -----------------------------
-# Google Sheets setup
+# Google Sheets setup (FIXED)
 # -----------------------------
+SHEET_ID = "1--vUOkH21zM5nsTwBuqlNv-9z-JJALCo5QSU-7OzUjA"
+
 creds = Credentials.from_service_account_info(
     st.secrets["gcp_service_account"],
-    scopes=[    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"]
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
 )
 
 client = gspread.authorize(creds)
-sheet = client.open("streamlit_inputs").sheet1
+sheet = client.open_by_key(SHEET_ID).sheet1
 
 # -----------------------------
-# Cached data loader (NEW)
+# Cached data loader
 # -----------------------------
 @st.cache_data(ttl=300)  # cache for 5 minutes
 def load_gigs_from_sheet():
@@ -112,6 +113,3 @@ st.subheader("👥 Total Audience Reached")
 
 total_crowd = int(df["crowd_size"].sum())
 st.metric("People Played To", f"{total_crowd:,}")
-
-
-
