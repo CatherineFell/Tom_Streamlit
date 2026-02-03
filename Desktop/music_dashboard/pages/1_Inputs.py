@@ -19,18 +19,28 @@ client = gspread.authorize(creds)
 sheet = client.open("streamlit_inputs").sheet1
 
 # -----------------------------
-# Load data from Google Sheets
+# Cached data loader (NEW)
 # -----------------------------
-rows = sheet.get_all_records()
+@st.cache_data(ttl=300)  # cache for 5 minutes
+def load_gigs_from_sheet():
+    rows = sheet.get_all_records()
+    return pd.DataFrame(rows)
 
-if not rows:
+# Optional manual refresh
+if st.button("🔄 Refresh data"):
+    st.cache_data.clear()
+
+# -----------------------------
+# Load data
+# -----------------------------
+df = load_gigs_from_sheet()
+
+if df.empty:
     st.warning("No gigs yet. Add data first.")
     st.stop()
 
-df = pd.DataFrame(rows)
-
 # -----------------------------
-# Data cleaning (mostly unchanged)
+# Data cleaning
 # -----------------------------
 df["gig_date"] = pd.to_datetime(df["gig_date"], errors="coerce")
 df = df.dropna(subset=["gig_date"])
@@ -38,7 +48,7 @@ df = df.dropna(subset=["gig_date"])
 df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
 df["hours_played"] = (
     pd.to_numeric(df["hours_played"], errors="coerce")
-    .replace(0, 1)  # avoid div by zero
+    .replace(0, 1)  # avoid division by zero
 )
 df["crowd_size"] = pd.to_numeric(df["crowd_size"], errors="coerce").fillna(0)
 
@@ -101,5 +111,6 @@ st.subheader("👥 Total Audience Reached")
 
 total_crowd = int(df["crowd_size"].sum())
 st.metric("People Played To", f"{total_crowd:,}")
+
 
 
