@@ -1,30 +1,31 @@
 import streamlit as st
 import pandas as pd
-from pathlib import Path
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 
 st.title("🎤 Gig Inputs")
 
+# -----------------------------
+# Google Sheets setup
+# -----------------------------
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
 
-DATA_PATH = Path("data/gigs.csv")
+client = gspread.authorize(creds)
+sheet = client.open("streamlit_inputs").sheet1  # MUST match your sheet name
 
-# Make sure the directory exists
-DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+# -----------------------------
+# Optional: load existing data
+# -----------------------------
+rows = sheet.get_all_records()
+df = pd.DataFrame(rows)
 
-
-if DATA_PATH.exists():
-    df = pd.read_csv(DATA_PATH, parse_dates=["gig_date", "booking_date"])
-else:
-    df = pd.DataFrame(columns=[
-        "gig_date",
-        "booking_date",
-        "gig_type",
-        "pay_amount",
-        "hours_played",
-        "travel_cost",
-        "crowd_size",
-        "year"
-    ])
-
+# -----------------------------
+# Gig input form
+# -----------------------------
 with st.form("gig_form"):
     gig_date = st.date_input("Gig Date")
     booking_date = st.date_input("Booking Date")
@@ -39,20 +40,28 @@ with st.form("gig_form"):
 
     submitted = st.form_submit_button("Add Gig")
 
+# -----------------------------
+# Save to Google Sheets
+# -----------------------------
 if submitted:
-    new_row = {
-        "gig_date": gig_date,
-        "booking_date": booking_date,
-        "gig_type": gig_type,
-        "pay_amount": pay_amount,
-        "hours_played": hours_played,
-        "travel_cost": travel_cost,
-        "crowd_size": crowd_size,
-        "year": gig_date.year
-    }
-
-    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-    df.to_csv(DATA_PATH, index=False)
+    sheet.append_row([
+        gig_date.isoformat(),
+        booking_date.isoformat(),
+        gig_type,
+        pay_amount,
+        hours_played,
+        travel_cost,
+        crowd_size,
+        gig_date.year,
+        datetime.utcnow().isoformat()
+    ])
 
     st.success("✅ Gig added successfully!")
+
+# -----------------------------
+# Optional: show saved gigs
+# -----------------------------
+if not df.empty:
+    st.subheader("Saved Gigs")
+    st.dataframe(df)
 
