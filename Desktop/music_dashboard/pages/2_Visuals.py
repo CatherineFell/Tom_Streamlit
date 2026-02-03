@@ -1,35 +1,70 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from pathlib import Path
+import gspread
+from google.oauth2.service_account import Credentials
 import datetime as dt
 
 st.title("📊 Performance Visuals")
 
-# --- Load Data ---
-DATA_PATH = Path("data/gigs.csv")
+# -----------------------------
+# Google Sheets setup
+# -----------------------------
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
-if not DATA_PATH.exists():
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=SCOPES,
+)
+
+client = gspread.authorize(creds)
+
+SHEET_ID = "1--vUOkH21zM5nsTwBuqlNv-9z-JJALCo5QSU-7OzUjA"
+sheet = client.open_by_key(SHEET_ID).sheet1
+
+# -----------------------------
+# Cached data loader
+# -----------------------------
+@st.cache_data(ttl=300)  # cache for 5 minutes
+def load_gigs():
+    rows = sheet.get_all_records()
+    return pd.DataFrame(rows)
+
+# Manual refresh button
+if st.button("🔄 Refresh data"):
+    st.cache_data.clear()
+
+# -----------------------------
+# Load data
+# -----------------------------
+df = load_gigs()
+
+if df.empty:
     st.warning("No gigs yet. Add data first.")
     st.stop()
 
-# Read CSV
-df = pd.read_csv(DATA_PATH, parse_dates=["gig_date", "booking_date"], dayfirst=True)
-
-# Ensure gig_date is datetime (coerce invalids to NaT)
+# -----------------------------
+# Data cleaning
+# -----------------------------
 df["gig_date"] = pd.to_datetime(df["gig_date"], errors="coerce")
-df = df.dropna(subset=["gig_date"])  # drop rows where gig_date couldn't be parsed
+df = df.dropna(subset=["gig_date"])
 
-# Ensure other numeric columns are numeric
 df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
-df["hours_played"] = pd.to_numeric(df["hours_played"], errors="coerce").replace(0, 1)  # avoid div by zero
+df["hours_played"] = (
+    pd.to_numeric(df["hours_played"], errors="coerce")
+    .replace(0, 1)  # avoid division by zero
+)
 df["crowd_size"] = pd.to_numeric(df["crowd_size"], errors="coerce").fillna(0)
 
-# Add day-of-year column
 df["day_of_year"] = df["gig_date"].dt.dayofyear
 df["year"] = df["gig_date"].dt.year
 
-# --- Revenue Comparison ---
+# -----------------------------
+# Revenue comparison
+# -----------------------------
 st.subheader("💰 Revenue: This Year vs Last Year (To Date)")
 
 today = dt.date.today()
@@ -38,15 +73,19 @@ day_of_year_today = today.timetuple().tm_yday
 current_year = df["year"].max()
 last_year = current_year - 1
 
-# Filter by year and up to today's day-of-year
-df_current = df[(df["year"] == current_year) & (df["day_of_year"] <= day_of_year_today)]
-df_last = df[(df["year"] == last_year) & (df["day_of_year"] <= day_of_year_today)]
+df_current = df[
+    (df["year"] == current_year)
+    & (df["day_of_year"] <= day_of_year_today)
+]
 
-# Cumulative revenue
+df_last = df[
+    (df["year"] == last_year)
+    & (df["day_of_year"] <= day_of_year_today)
+]
+
 current_rev = df_current.groupby("day_of_year")["pay_amount"].sum().cumsum()
 last_rev = df_last.groupby("day_of_year")["pay_amount"].sum().cumsum()
 
-# Plot revenue
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.plot(current_rev.index, current_rev.values, label=str(current_year), marker="o")
 ax.plot(last_rev.index, last_rev.values, label=str(last_year), marker="o")
@@ -58,18 +97,24 @@ ax.grid(True)
 
 st.pyplot(fig)
 
-# --- Pay per Hour by Gig Type ---
+# -----------------------------
+# Pay per hour by gig type
+# -----------------------------
 st.subheader("⏱️ Pay per Hour by Gig Type")
 
-# Avoid division by zero
 df["hourly_rate"] = df["pay_amount"] / df["hours_played"]
-hourly = df.groupby("gig_type")["hourly_rate"].mean().sort_values(ascending=False)
+hourly = (
+    df.groupby("gig_type")["hourly_rate"]
+    .mean()
+    .sort_values(ascending=False)
+)
 
 st.bar_chart(hourly)
 
-# --- Total Audience ---
+# -----------------------------
+# Total audience
+# -----------------------------
 st.subheader("👥 Total Audience Reached")
+
 total_crowd = int(df["crowd_size"].sum())
 st.metric("People Played To", f"{total_crowd:,}")
-
-
