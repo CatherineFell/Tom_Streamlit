@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+import datetime as dt
 
-st.title("🎤 Gig Inputs")
+st.title("📊 Performance Visuals")
 
 # -----------------------------
 # Google Sheets setup
@@ -15,53 +16,90 @@ creds = Credentials.from_service_account_info(
 )
 
 client = gspread.authorize(creds)
-sheet = client.open("streamlit_inputs").sheet1  # MUST match your sheet name
+sheet = client.open("streamlit_inputs").sheet1
 
 # -----------------------------
-# Optional: load existing data
+# Load data from Google Sheets
 # -----------------------------
 rows = sheet.get_all_records()
+
+if not rows:
+    st.warning("No gigs yet. Add data first.")
+    st.stop()
+
 df = pd.DataFrame(rows)
 
 # -----------------------------
-# Gig input form
+# Data cleaning (mostly unchanged)
 # -----------------------------
-with st.form("gig_form"):
-    gig_date = st.date_input("Gig Date")
-    booking_date = st.date_input("Booking Date")
-    gig_type = st.selectbox(
-        "Gig Type",
-        ["Bar", "Wedding", "Festival", "Private Event", "Other"]
-    )
-    pay_amount = st.number_input("Pay Amount ($)", min_value=0.0)
-    hours_played = st.number_input("Hours Played", min_value=0.1)
-    travel_cost = st.number_input("Travel Cost ($)", min_value=0.0)
-    crowd_size = st.number_input("Crowd Size", min_value=0, step=1)
+df["gig_date"] = pd.to_datetime(df["gig_date"], errors="coerce")
+df = df.dropna(subset=["gig_date"])
 
-    submitted = st.form_submit_button("Add Gig")
+df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
+df["hours_played"] = (
+    pd.to_numeric(df["hours_played"], errors="coerce")
+    .replace(0, 1)  # avoid div by zero
+)
+df["crowd_size"] = pd.to_numeric(df["crowd_size"], errors="coerce").fillna(0)
 
-# -----------------------------
-# Save to Google Sheets
-# -----------------------------
-if submitted:
-    sheet.append_row([
-        gig_date.isoformat(),
-        booking_date.isoformat(),
-        gig_type,
-        pay_amount,
-        hours_played,
-        travel_cost,
-        crowd_size,
-        gig_date.year,
-        datetime.utcnow().isoformat()
-    ])
-
-    st.success("✅ Gig added successfully!")
+df["day_of_year"] = df["gig_date"].dt.dayofyear
+df["year"] = df["gig_date"].dt.year
 
 # -----------------------------
-# Optional: show saved gigs
+# Revenue comparison
 # -----------------------------
-if not df.empty:
-    st.subheader("Saved Gigs")
-    st.dataframe(df)
+st.subheader("💰 Revenue: This Year vs Last Year (To Date)")
+
+today = dt.date.today()
+day_of_year_today = today.timetuple().tm_yday
+
+current_year = df["year"].max()
+last_year = current_year - 1
+
+df_current = df[
+    (df["year"] == current_year)
+    & (df["day_of_year"] <= day_of_year_today)
+]
+
+df_last = df[
+    (df["year"] == last_year)
+    & (df["day_of_year"] <= day_of_year_today)
+]
+
+current_rev = df_current.groupby("day_of_year")["pay_amount"].sum().cumsum()
+last_rev = df_last.groupby("day_of_year")["pay_amount"].sum().cumsum()
+
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot(current_rev.index, current_rev.values, label=str(current_year), marker="o")
+ax.plot(last_rev.index, last_rev.values, label=str(last_year), marker="o")
+ax.set_xlabel("Day of Year")
+ax.set_ylabel("Cumulative Revenue ($)")
+ax.set_title("Cumulative Revenue: This Year vs Last Year")
+ax.legend()
+ax.grid(True)
+
+st.pyplot(fig)
+
+# -----------------------------
+# Pay per hour by gig type
+# -----------------------------
+st.subheader("⏱️ Pay per Hour by Gig Type")
+
+df["hourly_rate"] = df["pay_amount"] / df["hours_played"]
+hourly = (
+    df.groupby("gig_type")["hourly_rate"]
+    .mean()
+    .sort_values(ascending=False)
+)
+
+st.bar_chart(hourly)
+
+# -----------------------------
+# Total audience
+# -----------------------------
+st.subheader("👥 Total Audience Reached")
+
+total_crowd = int(df["crowd_size"].sum())
+st.metric("People Played To", f"{total_crowd:,}")
+
 
