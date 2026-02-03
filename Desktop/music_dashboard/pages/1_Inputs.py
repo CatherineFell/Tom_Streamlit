@@ -4,7 +4,12 @@ from pathlib import Path
 
 st.title("🎤 Gig Inputs")
 
+
 DATA_PATH = Path("data/gigs.csv")
+
+# Make sure the directory exists
+DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 
 if DATA_PATH.exists():
     df = pd.read_csv(DATA_PATH, parse_dates=["gig_date", "booking_date"])
