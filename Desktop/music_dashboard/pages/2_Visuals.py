@@ -21,42 +21,32 @@ creds = Credentials.from_service_account_info(
 )
 
 client = gspread.authorize(creds)
-
 SHEET_ID = "1--vUOkH21zM5nsTwBuqlNv-9z-JJALCo5QSU-7OzUjA"
 sheet = client.open_by_key(SHEET_ID).sheet1
 
 # -----------------------------
-# Cached data loader
+# Cached loader
 # -----------------------------
 @st.cache_data(ttl=300)
 def load_gigs():
-    rows = sheet.get_all_records()
-    return pd.DataFrame(rows)
+    return pd.DataFrame(sheet.get_all_records())
 
 if st.button("🔄 Refresh data"):
     st.cache_data.clear()
 
-# -----------------------------
-# Load data
-# -----------------------------
 df = load_gigs()
-
 if df.empty:
-    st.warning("No gigs yet. Add data first.")
+    st.warning("No gigs yet.")
     st.stop()
 
 # -----------------------------
-# Data cleaning
+# Cleaning
 # -----------------------------
 df["gig_date"] = pd.to_datetime(df["gig_date"], errors="coerce")
 df = df.dropna(subset=["gig_date"])
 
-df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
-df["hours_played"] = (
-    pd.to_numeric(df["hours_played"], errors="coerce")
-    .replace(0, 1)
-)
-df["crowd_size"] = pd.to_numeric(df["crowd_size"], errors="coerce").fillna(0)
+df["gig_fee"] = pd.to_numeric(df["gig_fee"], errors="coerce").fillna(0)
+df["stage_time"] = pd.to_numeric(df["stage_time"], errors="coerce").replace(0, 1)
 
 df["day_of_year"] = df["gig_date"].dt.dayofyear
 df["year"] = df["gig_date"].dt.year
@@ -67,80 +57,59 @@ df["year"] = df["gig_date"].dt.year
 st.subheader("💰 Revenue: This Year vs Last Year (To Date)")
 
 today = dt.date.today()
-day_of_year_today = today.timetuple().tm_yday
+doy_today = today.timetuple().tm_yday
 
 current_year = df["year"].max()
 last_year = current_year - 1
 
-df_current = df[
-    (df["year"] == current_year)
-    & (df["day_of_year"] <= day_of_year_today)
-]
+df_current = df[(df["year"] == current_year) & (df["day_of_year"] <= doy_today)]
+df_last = df[(df["year"] == last_year) & (df["day_of_year"] <= doy_today)]
 
-df_last = df[
-    (df["year"] == last_year)
-    & (df["day_of_year"] <= day_of_year_today)
-]
-
-current_rev = df_current.groupby("day_of_year")["pay_amount"].sum().cumsum()
-last_rev = df_last.groupby("day_of_year")["pay_amount"].sum().cumsum()
+current_rev = df_current.groupby("day_of_year")["gig_fee"].sum().cumsum()
+last_rev = df_last.groupby("day_of_year")["gig_fee"].sum().cumsum()
 
 fig, ax = plt.subplots(figsize=(8, 5))
-ax.plot(current_rev.index, current_rev.values, label=str(current_year), marker="o")
-ax.plot(last_rev.index, last_rev.values, label=str(last_year), marker="o")
-ax.set_xlabel("Day of Year")
-ax.set_ylabel("Cumulative Revenue ($)")
-ax.set_title("Cumulative Revenue: This Year vs Last Year")
+ax.plot(current_rev.index, current_rev.values, label=str(current_year))
+ax.plot(last_rev.index, last_rev.values, label=str(last_year))
 ax.legend()
+ax.set_title("Cumulative Revenue")
+ax.set_xlabel("Day of Year")
+ax.set_ylabel("Revenue ($)")
 ax.grid(True)
 
 st.pyplot(fig)
 
 # -----------------------------
-# NEW: Gap to last year
+# Gap to last year
 # -----------------------------
 st.subheader("📉 Gap to Last Year")
 
-last_year_total = df[df["year"] == last_year]["pay_amount"].sum()
-current_year_to_date = df_current["pay_amount"].sum()
+current_total = current_rev.iloc[-1] if not current_rev.empty else 0
+last_total = last_rev.iloc[-1] if not last_rev.empty else 0
 
-gap = last_year_total - current_year_to_date
-progress_pct = (
-    (current_year_to_date / last_year_total) * 100
-    if last_year_total > 0
-    else 0
-)
+gap = current_total - last_total
+pct = (gap / last_total * 100) if last_total > 0 else 0
 
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Last Year Total", f"${last_year_total:,.0f}")
-col2.metric("This Year (To Date)", f"${current_year_to_date:,.0f}")
-
-col3.metric(
-    "Remaining to Match",
-    f"${gap:,.0f}",
-    delta=f"{progress_pct:.1f}% of last year",
+st.metric(
+    "Revenue vs Last Year",
+    f"${current_total:,.0f}",
+    delta=f"{gap:,.0f} ({pct:.1f}%)",
 )
 
 # -----------------------------
-# Pay per hour by gig type
+# Pay per hour
 # -----------------------------
 st.subheader("⏱️ Pay per Hour by Gig Type")
 
-df["hourly_rate"] = df["pay_amount"] / df["hours_played"]
-hourly = (
-    df.groupby("gig_type")["hourly_rate"]
-    .mean()
-    .sort_values(ascending=False)
-)
+df["hourly_rate"] = df["gig_fee"] / df["stage_time"]
+hourly = df.groupby("gig_type")["hourly_rate"].mean().sort_values(ascending=False)
 
 st.bar_chart(hourly)
 
 # -----------------------------
-# Total audience
+# Audience
 # -----------------------------
 st.subheader("👥 Total Audience Reached")
+st.metric("People Played To", f"{int(df['crowd_size'].sum()):,}")
 
-total_crowd = int(df["crowd_size"].sum())
-st.metric("People Played To", f"{total_crowd:,}")
 
