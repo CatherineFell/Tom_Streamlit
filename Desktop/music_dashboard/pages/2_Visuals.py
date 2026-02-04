@@ -28,12 +28,11 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 # -----------------------------
 # Cached data loader
 # -----------------------------
-@st.cache_data(ttl=300)  # cache for 5 minutes
+@st.cache_data(ttl=300)
 def load_gigs():
     rows = sheet.get_all_records()
     return pd.DataFrame(rows)
 
-# Manual refresh button
 if st.button("🔄 Refresh data"):
     st.cache_data.clear()
 
@@ -55,7 +54,7 @@ df = df.dropna(subset=["gig_date"])
 df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
 df["hours_played"] = (
     pd.to_numeric(df["hours_played"], errors="coerce")
-    .replace(0, 1)  # avoid division by zero
+    .replace(0, 1)
 )
 df["crowd_size"] = pd.to_numeric(df["crowd_size"], errors="coerce").fillna(0)
 
@@ -98,6 +97,32 @@ ax.grid(True)
 st.pyplot(fig)
 
 # -----------------------------
+# NEW: Gap to last year
+# -----------------------------
+st.subheader("📉 Gap to Last Year")
+
+last_year_total = df[df["year"] == last_year]["pay_amount"].sum()
+current_year_to_date = df_current["pay_amount"].sum()
+
+gap = last_year_total - current_year_to_date
+progress_pct = (
+    (current_year_to_date / last_year_total) * 100
+    if last_year_total > 0
+    else 0
+)
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Last Year Total", f"${last_year_total:,.0f}")
+col2.metric("This Year (To Date)", f"${current_year_to_date:,.0f}")
+
+col3.metric(
+    "Remaining to Match",
+    f"${gap:,.0f}",
+    delta=f"{progress_pct:.1f}% of last year",
+)
+
+# -----------------------------
 # Pay per hour by gig type
 # -----------------------------
 st.subheader("⏱️ Pay per Hour by Gig Type")
@@ -118,3 +143,4 @@ st.subheader("👥 Total Audience Reached")
 
 total_crowd = int(df["crowd_size"].sum())
 st.metric("People Played To", f"{total_crowd:,}")
+
