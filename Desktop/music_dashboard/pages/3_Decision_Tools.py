@@ -1,173 +1,75 @@
 import streamlit as st
-import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
 
-st.title("🧠 Decision Tools")
-st.caption("Evaluate future gigs using your own priorities.")
+st.title("🧠 Gig Decision Tool")
 
-# -----------------------------
-# How this works
-# -----------------------------
-with st.expander("ℹ️ How this decision is calculated"):
-    st.markdown(
-        """
-This tool scores a potential gig using **three dimensions**:
+st.markdown("""
+This tool estimates whether a gig is **worth taking**, based on:
+- Money
+- Time cost
+- Enjoyment & future value
 
-### 1️⃣ Money
-- Net pay (fee − travel)
-- Effective hourly rate (based on time away from home)
-- Compared against your *historical averages*
-
-### 2️⃣ Career Impact
-- Gig quality (Low / Medium / High)
-- Potential to create future opportunities
-
-### 3️⃣ Personal Enjoyment
-- How enjoyable you expect the gig to be
-
-You can **control how much each factor matters** using the sliders below.
-Think of them as *what you care about right now*, not forever.
-"""
-    )
+You can **control how much each factor matters**.
+""")
 
 # -----------------------------
-# Weight controls (NEW)
+# Inputs
 # -----------------------------
-st.subheader("🎛️ Impact Weighting")
+st.subheader("Gig Details")
 
-col_w1, col_w2, col_w3 = st.columns(3)
+gig_fee = st.number_input("Gig Fee ($)", 0.0)
+stage_time = st.number_input("Stage Time (hours)", 0.1)
+time_away = st.number_input("Total Time Away From Home (hours)", 0.1)
+travel_cost = st.number_input("Travel Cost ($)", 0.0)
 
-with col_w1:
-    money_weight = st.slider("Money importance", 0.0, 1.0, 0.5, 0.05)
-
-with col_w2:
-    career_weight = st.slider("Career impact importance", 0.0, 1.0, 0.3, 0.05)
-
-with col_w3:
-    enjoyment_weight = st.slider("Enjoyment importance", 0.0, 1.0, 0.2, 0.05)
-
-total_weight = money_weight + career_weight + enjoyment_weight
-
-if total_weight == 0:
-    st.warning("At least one weighting must be greater than zero.")
-    st.stop()
-
-# Normalise weights so they always sum to 1
-money_weight /= total_weight
-career_weight /= total_weight
-enjoyment_weight /= total_weight
+quality = st.selectbox("Gig Quality", ["High", "Medium", "Low"])
+enjoyment = st.slider("Gig Enjoyment", 1, 5, 3)
+connections = st.slider("Connections Potential", 1, 5, 3)
 
 # -----------------------------
-# Google Sheets setup
+# Weighting
 # -----------------------------
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+st.subheader("⚖️ What Matters to You")
 
-creds = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"],
-    scopes=SCOPES,
+w_money = st.slider("Money Importance", 0.0, 1.0, 0.4)
+w_time = st.slider("Time Cost Importance", 0.0, 1.0, 0.3)
+w_experience = st.slider("Experience / Future Value", 0.0, 1.0, 0.3)
+
+# -----------------------------
+# Scoring
+# -----------------------------
+quality_map = {"High": 5, "Medium": 3, "Low": 1}
+
+money_score = (gig_fee - travel_cost) / max(time_away, 1)
+time_score = 1 / time_away
+experience_score = (quality_map[quality] + enjoyment + connections) / 15
+
+decision_score = (
+    money_score * w_money
+    + time_score * w_time
+    + experience_score * w_experience * 10
 )
 
-client = gspread.authorize(creds)
-
-SHEET_ID = "1--vUOkH21zM5nsTwBuqlNv-9z-JJALCo5QSU-7OzUjA"
-sheet = client.open_by_key(SHEET_ID).sheet1
-
 # -----------------------------
-# Cached data loader
+# Output
 # -----------------------------
-@st.cache_data(ttl=300)
-def load_gigs():
-    return pd.DataFrame(sheet.get_all_records())
+st.subheader("📊 Decision Result")
 
-df = load_gigs()
+if decision_score >= 8:
+    verdict = "🔥 Strong Yes"
+elif decision_score >= 5:
+    verdict = "👍 Probably Worth It"
+elif decision_score >= 3:
+    verdict = "⚠️ Borderline"
+else:
+    verdict = "❌ Not Worth It"
 
-if df.empty:
-    st.warning("Not enough historical data yet.")
-    st.stop()
+st.metric("Decision Score", f"{decision_score:.2f}")
+st.success(verdict)
 
-# -----------------------------
-# Historical baselines
-# -----------------------------
-df["pay_amount"] = pd.to_numeric(df["pay_amount"], errors="coerce").fillna(0)
-df["travel_cost"] = pd.to_numeric(df["travel_cost"], errors="coerce").fillna(0)
-df["hours_played"] = pd.to_numeric(df["hours_played"], errors="coerce").replace(0, 1)
+st.markdown("""
+**How this works**
+- Money is adjusted for travel and time away
+- Experience combines enjoyment, quality, and connections
+- Weights let you decide what you care about *this season*
+""")
 
-df["net_pay"] = df["pay_amount"] - df["travel_cost"]
-df["hourly_rate"] = df["net_pay"] / df["hours_played"]
-
-avg_hourly = df["hourly_rate"].mean()
-median_hourly = df["hourly_rate"].median()
-
-# -----------------------------
-# Future gig evaluator
-# -----------------------------
-st.subheader("🎯 Evaluate a Potential Gig")
-
-with st.form("gig_decision_form"):
-    fee = st.number_input("Gig Fee ($)", min_value=0.0)
-    travel_cost = st.number_input("Travel Cost ($)", min_value=0.0)
-    time_away = st.number_input("Total Time Away From Home (hours)", min_value=0.1)
-
-    gig_quality = st.selectbox("Gig Quality", ["Low", "Medium", "High"])
-    enjoyment = st.slider("Expected Enjoyment (1–5)", 1, 5, 3)
-    connections = st.slider("Connections Potential (1–5)", 1, 5, 3)
-
-    evaluate = st.form_submit_button("Evaluate Gig")
-
-# -----------------------------
-# Decision logic
-# -----------------------------
-if evaluate:
-    net_pay = fee - travel_cost
-    effective_hourly = net_pay / time_away
-
-    # Normalised money score (relative to your average)
-    money_score = min(effective_hourly / avg_hourly, 2.0)
-
-    # Career score
-    quality_weight = {"Low": 1, "Medium": 2, "High": 3}[gig_quality]
-    career_score = (quality_weight * connections) / 15  # normalised 0–1
-
-    # Enjoyment score
-    enjoyment_score = enjoyment / 5
-
-    # Final weighted score
-    final_score = (
-        money_score * money_weight
-        + career_score * career_weight
-        + enjoyment_score * enjoyment_weight
-    )
-
-    st.markdown("### 📊 Evaluation Breakdown")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Net Pay", f"${net_pay:,.0f}")
-    col2.metric("Effective Hourly", f"${effective_hourly:,.2f}/hr")
-    col3.metric("Final Score", f"{final_score:.2f}")
-
-    st.markdown(
-        f"""
-**Score components:**
-- Money score: `{money_score:.2f}` × weight `{money_weight:.2f}`
-- Career score: `{career_score:.2f}` × weight `{career_weight:.2f}`
-- Enjoyment score: `{enjoyment_score:.2f}` × weight `{enjoyment_weight:.2f}`
-"""
-    )
-
-    # -----------------------------
-    # Recommendation
-    # -----------------------------
-    if final_score >= 0.9:
-        st.success("✅ Strong yes — aligns well with your current priorities.")
-    elif final_score >= 0.65:
-        st.info("🟡 Maybe — acceptable, but not exceptional.")
-    else:
-        st.warning("❌ Probably not worth it given your current weighting.")
-
-    st.caption(
-        "Try adjusting the sliders to see how your priorities change the outcome."
-    )
