@@ -8,6 +8,7 @@ st.write("""
 Use the sidebar to:
 • Add gig data  
 • View performance visuals
+• Make decisions
 """)
 
 
